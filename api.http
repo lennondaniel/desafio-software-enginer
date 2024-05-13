@@ -1,0 +1,11 @@
+@apiUrl = http://localhost:3000
+
+
+POST {{apiUrl}}/account/event HTTP/1.1
+Content-Type: application/json
+
+{ 
+    "type" :"deposit",
+    "destination" :"100",
+    "amount" :10 
+}
