@@ -1,8 +1,9 @@
 import { IsNotEmpty, IsOptional } from "class-validator";
+import { TransactionType } from "src/types/transaction.types";
 
 export class TransactionAccountDto {
     @IsNotEmpty()
-    type: string
+    type: TransactionType
     
     @IsOptional()
     destination?: string

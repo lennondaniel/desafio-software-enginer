@@ -4,58 +4,75 @@ import { Account } from './entities/account.entity';
 import { Repository } from 'typeorm';
 import { IAccountService } from './interfaces/account.service.interface';
 import { TransactionAccountDto } from './dto/transaction-account.dto';
-import { ResponseDestinationAccountDto, ResponseOriginAccountDto, ResponseTransferAccountDto } from './dto/response-account.dto';
-
-enum TransactionType {
-  DEPOSIT = 'deposit',
-  TRANSFER = 'transfer',
-  WITHDRAW = 'withdraw'
-}
+import {
+  EntityManagerType,
+  ResponseAccount, 
+  ResponseDestinationAccount, 
+  ResponseOriginAccount, 
+  ResponseTransferAccount, 
+  TransactionType, 
+  isDeposit, 
+  isTransfer, 
+  isWithdraw
+} from 'src/types/transaction.types';
 
 @Injectable()
 export class AccountService implements IAccountService {
 
   constructor(@InjectRepository(Account) readonly accountRepository: Repository<Account>) { }
-  async executeTransaction(transaction: TransactionAccountDto): Promise<ResponseDestinationAccountDto | ResponseOriginAccountDto | ResponseTransferAccountDto> {
-    if (TransactionType.DEPOSIT == transaction.type) {
-      let account = await this.CheckIfAccount(transaction.destination)
-      if (!account) {
-        const newAccount = await this.createAccount(transaction.destination, transaction.amount)
-        return { destination: newAccount }
-      }
 
-      const result = await this.updateBalance(account, transaction)
-      return { destination: result }
+  async executeTransaction(transaction: TransactionAccountDto): Promise<ResponseAccount> {
+    if (isDeposit(transaction.type)) {
+      return this.handleDeposit(transaction)
     }
 
-    if (TransactionType.WITHDRAW == transaction.type) {
-      let account = await this.CheckIfAccount(transaction.origin)
-      if (!account) {
-        throw new Error('Account not found')
-      }
-
-      const result = await this.updateBalance(account, transaction)
-      return { origin: result }
+    if (isWithdraw(transaction.type)) {
+      return this.handleWithdraw(transaction)
     }
 
-    if (TransactionType.TRANSFER == transaction.type) {
-      const originAccount = await this.CheckIfAccount(transaction.origin)
-      let destinationAccount = await this.CheckIfAccount(transaction.destination)
-      if (!originAccount) {
-        throw new Error('Origin account not found')
-      }
-      if(!destinationAccount) {
-
-        destinationAccount = await this.createAccount(transaction.destination, 0)
-      }
-
-      return await this.transferValue(originAccount, destinationAccount, transaction.amount)
+    if (isTransfer(transaction.type)) {
+      return this.handleTransfer(transaction)
     }
 
     throw new Error('Type transaction not found')
   }
 
-  async CheckIfAccount(id: string): Promise<Account | null> {
+  private async handleDeposit(transaction: TransactionAccountDto): Promise<ResponseDestinationAccount> {
+    let account = await this.findAccountById(transaction.destination)
+
+    if (!account) {
+      account = await this.createAccount(transaction.destination, transaction.amount)
+    } else {
+      account = await this.updateAmount(account, 'deposit', transaction.amount)
+    }
+
+    return { destination: account }
+  }
+
+  private async handleWithdraw(transaction: TransactionAccountDto): Promise<ResponseOriginAccount> {
+    const account = await this.findAccountById(transaction.origin)
+    if (!account) {
+      throw new Error('Account not found')
+    }
+
+    const result = await this.updateAmount(account, 'withdraw', transaction.amount)
+    return { origin: result }
+  }
+
+  private async handleTransfer(transaction: TransactionAccountDto): Promise<ResponseTransferAccount> {
+    const originAccount = await this.findAccountById(transaction.origin)
+    let destinationAccount = await this.findAccountById(transaction.destination)
+    if (!originAccount) {
+      throw new Error('Origin account not found')
+    }
+    if (!destinationAccount) {
+      destinationAccount = await this.createAccount(transaction.destination, 0)
+    }
+
+    return await this.transferAmount(originAccount, destinationAccount, transaction.amount)
+  }
+
+  async findAccountById(id: string): Promise<Account | null> {
     const account = await this.accountRepository.findOne({ where: { id: id } })
 
     if (account) {
@@ -66,35 +83,61 @@ export class AccountService implements IAccountService {
   }
 
   async createAccount(id: string, balance: number): Promise<Account> {
-    const accountCreated = this.accountRepository.create({id: id, balance: balance})
+    const accountCreated = this.accountRepository.create({ id: id, balance: balance })
 
     return await this.accountRepository.save(accountCreated)
   }
 
-  private async transferValue(origin: Account, destination: Account, amount: number): Promise<{origin: Account, destination: Account}> {
-    if(origin.balance < amount) {
+  private async transferAmount(origin: Account, destination: Account, amount: number): Promise<ResponseTransferAccount> {
+    if (!this.hasSufficientBalance(origin, amount)) {
       throw new Error('Insufficient balance')
     }
 
-    origin.balance -= amount
-    destination.balance += amount
-    const originRes = await this.accountRepository.save(origin)
-    const destinationRes = await this.accountRepository.save(destination)
-    return Promise.resolve({ origin: originRes, destination: destinationRes })
+    return await this.accountRepository.manager.transaction(async (entityManager) => {
+      const originUpdated = await this.updateAmount(origin, 'withdraw', amount, entityManager, true)
+      const destinationUpdated = await this.updateAmount(destination, 'deposit', amount, entityManager, true)
+
+      return { origin: originUpdated, destination: destinationUpdated }
+    })
   }
 
-  private async updateBalance(account: Account, transaction: TransactionAccountDto): Promise<Account> {
-    if (TransactionType.DEPOSIT == transaction.type) {
-      account.balance += transaction.amount
-    }
-    if (TransactionType.WITHDRAW == transaction.type) {
-      if(account.balance < transaction.amount) {
-        throw new Error('Insufficient balance')
-      }
-      account.balance -= transaction.amount
+  private async updateAmount(
+    account: Account,
+    type: TransactionType,
+    amount: number,
+    entityManager: EntityManagerType = null,
+    useTransaction: boolean = false
+  ): Promise<Account> {
+    if (!isDeposit(type) && !isWithdraw(type)) {
+      throw new Error('Invalid transaction type')
     }
 
-    return await this.accountRepository.save(account)
+    if (isDeposit(type)) {
+      this.updateDepositAmount(account, amount)
+    } else {
+      this.updateWithdrawAmount(account, amount)
+    }
+
+    if (useTransaction) {
+      return await entityManager.save(account)
+    }
+
+    return this.accountRepository.save(account)
+  }
+
+  private updateDepositAmount(account: Account, amount: number): void {
+    account.balance += amount
+  }
+
+  private updateWithdrawAmount(account: Account, amount: number): void {
+    if (!this.hasSufficientBalance(account, amount)) {
+      throw new Error('Insufficient balance')
+    }
+    account.balance -= amount
+  }
+
+  private hasSufficientBalance(account: Account, amount: number): boolean {
+    return account.balance < amount
   }
 
   async reset(): Promise<void> {
