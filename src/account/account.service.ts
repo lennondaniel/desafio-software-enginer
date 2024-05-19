@@ -14,7 +14,7 @@ import {
   isDeposit, 
   isTransfer, 
   isWithdraw
-} from 'src/types/transaction.types';
+} from '../types/transaction.types';
 
 @Injectable()
 export class AccountService implements IAccountService {
@@ -137,7 +137,7 @@ export class AccountService implements IAccountService {
   }
 
   private hasSufficientBalance(account: Account, amount: number): boolean {
-    return account.balance < amount
+    return account.balance >= amount
   }
 
   async reset(): Promise<void> {
