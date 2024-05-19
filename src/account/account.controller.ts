@@ -1,8 +1,6 @@
 import { Controller, Get, Post, Body, Inject, Res, Query, HttpStatus, HttpCode } from '@nestjs/common';
 import { IAccountService } from './interfaces/account.service.interface';
-import { Account } from './entities/account.entity';
 import { TransactionAccountDto } from './dto/transaction-account.dto';
-import { ResponseDestinationAccountDto, ResponseOriginAccountDto, ResponseTransferAccountDto } from './dto/response-account.dto';
 import { Response } from 'express';
 
 @Controller()
@@ -22,7 +20,7 @@ export class AccountController {
 
   @Get('/balance')
   async find(@Res() res: Response, @Query('account_id') account_id: string) {
-    const result = await this.accountService.CheckIfAccount(account_id)
+    const result = await this.accountService.findAccountById(account_id)
 
     if (!result) {
       res.status(404).json(0)
