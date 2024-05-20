@@ -6,7 +6,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Account } from './entities/account.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Account]), t],
+  imports: [TypeOrmModule.forFeature([Account])],
   providers: [
     {
       provide: IAccountService,
